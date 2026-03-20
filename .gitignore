@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local envs
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.local
+
+# Outputs
+outputs/
+
+# IDE
+.vscode/
