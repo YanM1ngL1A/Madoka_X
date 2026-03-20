@@ -272,6 +272,7 @@ def run_check(config: CheckConfig, log=print) -> dict:
         "available_csv": str(available_csv),
         "workers": config.workers,
         "timeout": config.timeout,
+        "summary_path": str(summary_json),
     }
     summary_json.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     log(f"[Stage 1] Saved summary: {summary_json}")
@@ -372,6 +373,7 @@ def run_fetch(config: FetchConfig, log=print) -> dict:
         "output_json": str(output_json),
         "missing_txt": str(output_missing),
         "batch_size": config.batch_size,
+        "summary_path": str(output_summary),
     }
     output_summary.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     log(f"[Stage 2] Saved summary: {output_summary}")
@@ -433,6 +435,7 @@ def run_pipeline(
         "fetched": fetch_summary is not None,
     }
     summary_path = write_pipeline_summary(output_root, input_path, f"{normalize_job_name(input_path)}_pipeline", summary)
+    summary["summary_path"] = str(summary_path)
     log(f"[Pipeline] Saved run summary: {summary_path}")
     return summary
 
@@ -508,5 +511,6 @@ def run_test(
         "result": run_result,
     }
     summary_path = write_pipeline_summary(output_root, input_path, f"{sample_path.stem}_{mode}_test", summary)
+    summary["summary_path"] = str(summary_path)
     log(f"[Test] Saved test summary: {summary_path}")
     return summary

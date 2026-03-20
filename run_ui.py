@@ -1,4 +1,4 @@
-from xcrawler_app.ui import main
+from xcrawler_app.ui_modern import main
 
 
 if __name__ == "__main__":

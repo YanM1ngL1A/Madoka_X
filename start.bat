@@ -3,10 +3,13 @@ setlocal
 
 cd /d "%~dp0"
 
-if exist ".venv\Scripts\python.exe" (
+if exist ".venv\Scripts\pythonw.exe" (
+    start "" ".venv\Scripts\pythonw.exe" "run_ui.py"
+    exit /b 0
+) else if exist ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" "run_ui.py"
 ) else (
-    python "run_ui.py"
+    pythonw "run_ui.py"
 )
 
 if errorlevel 1 (

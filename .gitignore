@@ -13,6 +13,10 @@ env/
 
 # Outputs
 outputs/
+ui_settings.json
+build/
+dist/
+*.lnk
 
 # IDE
 .vscode/
