@@ -17,6 +17,7 @@ from xcrawler_app.pipeline import (
     DEFAULT_WORKERS,
     CheckConfig,
     FetchConfig,
+    UserCancelledError,
     get_api_key,
     run_check,
     run_fetch,
@@ -58,6 +59,7 @@ class App:
         self.stage_code = "check"
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.worker_thread: threading.Thread | None = None
+        self.stop_event = threading.Event()
         self.latest_output_path: Path | None = None
         self.latest_report_path: Path | None = None
         self._init_vars()
@@ -84,6 +86,13 @@ class App:
         self.fetch_timeout_var = tk.StringVar(value=str(DEFAULT_FETCH_TIMEOUT))
         self.fetch_retries_var = tk.StringVar(value="3")
         self.status_var = tk.StringVar()
+        self.progress_label_var = tk.StringVar()
+        self.progress_count_var = tk.StringVar()
+        self.progress_value_var = tk.DoubleVar(value=0.0)
+        self.progress_processed = 0
+        self.progress_total = 0
+        self.progress_stage_code = ""
+        self.status_state = "idle"
 
     def _style(self) -> None:
         self.root.title("X Crawler")
@@ -156,7 +165,7 @@ class App:
         right = ttk.Frame(outer, style="Card.TFrame", padding=18)
         right.grid(row=1, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(3, weight=1)
+        right.rowconfigure(4, weight=1)
         self._build_right(right)
 
     def _build_left(self, parent: ttk.Frame) -> None:
@@ -205,6 +214,8 @@ class App:
         btns.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(16, 0))
         self.run_button = ttk.Button(btns, style="Accent.TButton", command=self._run)
         self.run_button.pack(side=tk.LEFT)
+        self.stop_button = ttk.Button(btns, style="RunSecondary.TButton", command=self._stop_run)
+        self.stop_button.pack(side=tk.LEFT, padx=(10, 0))
         self.clear_button = ttk.Button(btns, style="Soft.TButton", command=self._clear_log)
         self.clear_button.pack(side=tk.LEFT, padx=(10, 0))
 
@@ -253,8 +264,26 @@ class App:
         self.fetch_retries_entry = ttk.Entry(self.fetch_card, textvariable=self.fetch_retries_var, style="Modern.TEntry")
         self.fetch_retries_entry.grid(row=3, column=1, sticky="ew", pady=6)
 
+        self.progress_card = ttk.LabelFrame(parent, style="Card.TLabelframe", padding=14)
+        self.progress_card.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        self.progress_card.columnconfigure(0, weight=1)
+        self.progress_title = ttk.Label(self.progress_card, style="Field.TLabel")
+        self.progress_title.grid(row=0, column=0, sticky="w")
+        self.progress_count = ttk.Label(self.progress_card, textvariable=self.progress_count_var, style="Hint.TLabel")
+        self.progress_count.grid(row=0, column=1, sticky="e")
+        self.progress_stage = ttk.Label(self.progress_card, textvariable=self.progress_label_var, style="Hint.TLabel")
+        self.progress_stage.grid(row=1, column=0, sticky="w", pady=(6, 6))
+        self.progress_bar = ttk.Progressbar(
+            self.progress_card,
+            orient="horizontal",
+            mode="determinate",
+            maximum=100,
+            variable=self.progress_value_var,
+        )
+        self.progress_bar.grid(row=2, column=0, columnspan=2, sticky="ew")
+
         self.log_label = ttk.Label(parent, style="Field.TLabel")
-        self.log_label.grid(row=2, column=0, sticky="w", pady=(14, 6))
+        self.log_label.grid(row=3, column=0, sticky="w", pady=(14, 6))
         self.log_text = tk.Text(
             parent,
             bg="#0f1720",
@@ -266,7 +295,7 @@ class App:
             pady=12,
             wrap="word",
         )
-        self.log_text.grid(row=3, column=0, sticky="nsew")
+        self.log_text.grid(row=4, column=0, sticky="nsew")
 
     def tr(self, key: str) -> str:
         return TEXT[self.lang][key]
@@ -297,14 +326,20 @@ class App:
         self.input_button.configure(text=self.tr("browse"))
         self.output_button.configure(text=self.tr("browse"))
         self.run_button.configure(text=self.tr("run"))
+        self.stop_button.configure(text=self.tr("stop"))
         self.clear_button.configure(text=self.tr("clear"))
         self.save_button.configure(text=self.tr("save_config"))
         self.load_button.configure(text=self.tr("load_config"))
         self.open_output_button.configure(text=self.tr("open_output"))
         self.open_report_button.configure(text=self.tr("open_report"))
+        self.progress_title.configure(text=self.tr("progress"))
         self.log_label.configure(text=self.tr("log"))
         self._refresh_modes()
-        self._set_status("idle")
+        self._set_status(self.status_state)
+        if self.progress_stage_code:
+            self.progress_label_var.set(MODE_TEXT[self.lang].get(f"progress-{self.progress_stage_code}", self.progress_stage_code))
+        self._render_progress_count()
+        self._update_action_buttons()
 
     def _refresh_modes(self) -> None:
         order = ("check", "fetch", "pipeline", "test-check", "test-pipeline")
@@ -324,10 +359,13 @@ class App:
         return "check"
 
     def _set_status(self, state: str) -> None:
+        self.status_state = state
         self.status_var.set(self.tr(state))
         palette = {
             "idle": ("#e7efe4", "#2f5832"),
             "running": ("#e9f0fb", "#1f477d"),
+            "stopping": ("#f5ecd9", "#836329"),
+            "stopped": ("#f0ece4", "#5e5646"),
             "done": ("#e7efe4", "#2f5832"),
             "error": ("#f9e6e4", "#8c3129"),
         }
@@ -336,6 +374,43 @@ class App:
 
     def _set_status_async(self, state: str) -> None:
         self.root.after(0, lambda: self._set_status(state))
+
+    def _is_running(self) -> bool:
+        return self.worker_thread is not None and self.worker_thread.is_alive()
+
+    def _update_action_buttons(self) -> None:
+        is_running = self._is_running()
+        self.run_button.configure(state="disabled" if is_running else "normal")
+        self.stop_button.configure(state="normal" if is_running else "disabled")
+
+    def _reset_progress(self) -> None:
+        self.progress_processed = 0
+        self.progress_total = 0
+        self.progress_stage_code = ""
+        self.progress_label_var.set("")
+        self.progress_value_var.set(0.0)
+        self.progress_count_var.set("0 / 0")
+
+    def _render_progress_count(self, processed: int | None = None, total: int | None = None) -> None:
+        if processed is None:
+            processed = self.progress_processed
+        if total is None:
+            total = self.progress_total
+        self.progress_count_var.set(f"{self.tr('processed')}: {processed} / {total}")
+
+    def _set_progress(self, stage: str, processed: int, total: int) -> None:
+        self.progress_processed = processed
+        self.progress_total = total
+        self.progress_stage_code = stage
+        stage_key = f"progress-{stage}"
+        stage_text = MODE_TEXT[self.lang].get(stage_key, stage)
+        self.progress_label_var.set(stage_text)
+        ratio = 0.0 if total <= 0 else min(100.0, (processed / total) * 100.0)
+        self.progress_value_var.set(ratio)
+        self._render_progress_count(processed, total)
+
+    def _set_progress_async(self, stage: str, processed: int, total: int) -> None:
+        self.root.after(0, lambda: self._set_progress(stage, processed, total))
 
     def _on_mode_change(self, _event=None) -> None:
         self.stage_code = self._stage_from_label(self.mode_var.get())
@@ -367,6 +442,14 @@ class App:
 
     def _clear_log(self) -> None:
         self.log_text.delete("1.0", tk.END)
+
+    def _stop_run(self) -> None:
+        if not self._is_running():
+            return
+        self.stop_event.set()
+        self._set_status("stopping")
+        self.stop_button.configure(state="disabled")
+        self._log(self.tr("msg_stopping"))
 
     def _collect_config(self) -> dict:
         return {
@@ -486,16 +569,24 @@ class App:
         self.latest_report_path = self._extract_report_path(result)
 
     def _finish_run(self, result: dict, output_root: Path) -> None:
+        self.worker_thread = None
         self._update_latest_paths(result, output_root)
         self._log(self.tr("msg_finished"))
         self._set_status("done")
+        self._update_action_buttons()
 
     def _fail_run(self, exc: Exception) -> None:
-        self._log(f"ERROR: {exc}")
-        self._set_status("error")
+        self.worker_thread = None
+        if isinstance(exc, UserCancelledError):
+            self._log(self.tr("msg_cancelled"))
+            self._set_status("stopped")
+        else:
+            self._log(f"ERROR: {exc}")
+            self._set_status("error")
+        self._update_action_buttons()
 
     def _run(self) -> None:
-        if self.worker_thread and self.worker_thread.is_alive():
+        if self._is_running():
             messagebox.showinfo(self.tr("msg_running_title"), self.tr("msg_running"))
             return
 
@@ -524,6 +615,10 @@ class App:
             messagebox.showerror(self.tr("msg_invalid_title"), str(exc))
             return
 
+        self.stop_event.clear()
+        self._reset_progress()
+        self._update_action_buttons()
+
         def worker() -> None:
             try:
                 self._set_status_async("running")
@@ -532,6 +627,8 @@ class App:
                     result = run_check(
                         CheckConfig(input_path, output_root, top_n, workers, check_timeout, check_retries),
                         log=self._log,
+                        progress=self._set_progress_async,
+                        stop_event=self.stop_event,
                     )
                 elif self.stage_code == "fetch":
                     result = run_fetch(
@@ -546,6 +643,8 @@ class App:
                             fetch_retries,
                         ),
                         log=self._log,
+                        progress=self._set_progress_async,
+                        stop_event=self.stop_event,
                     )
                 elif self.stage_code == "pipeline":
                     result = run_pipeline(
@@ -561,6 +660,8 @@ class App:
                         fetch_timeout,
                         fetch_retries,
                         log=self._log,
+                        progress=self._set_progress_async,
+                        stop_event=self.stop_event,
                     )
                 elif self.stage_code == "test-check":
                     result = run_test(
@@ -579,6 +680,8 @@ class App:
                         fetch_timeout,
                         fetch_retries,
                         log=self._log,
+                        progress=self._set_progress_async,
+                        stop_event=self.stop_event,
                     )
                 elif self.stage_code == "test-pipeline":
                     result = run_test(
@@ -597,6 +700,8 @@ class App:
                         fetch_timeout,
                         fetch_retries,
                         log=self._log,
+                        progress=self._set_progress_async,
+                        stop_event=self.stop_event,
                     )
                 else:
                     raise RuntimeError(f"Unsupported mode: {self.stage_code}")
@@ -606,6 +711,7 @@ class App:
 
         self.worker_thread = threading.Thread(target=worker, daemon=True)
         self.worker_thread.start()
+        self._update_action_buttons()
 
 
 def main() -> int:

@@ -29,6 +29,10 @@ USER_AGENT = (
 _thread_local = threading.local()
 
 
+class UserCancelledError(RuntimeError):
+    pass
+
+
 @dataclass
 class CheckConfig:
     input_path: Path
@@ -49,6 +53,16 @@ class FetchConfig:
     sleep_sec: float = DEFAULT_SLEEP_SEC
     timeout: int = DEFAULT_FETCH_TIMEOUT
     retries: int = 3
+
+
+def ensure_not_cancelled(stop_event: threading.Event | None) -> None:
+    if stop_event is not None and stop_event.is_set():
+        raise UserCancelledError("Operation cancelled by user.")
+
+
+def emit_progress(progress, stage: str, processed: int, total: int) -> None:
+    if progress is not None:
+        progress(stage, processed, total)
 
 
 def get_api_key(explicit_api_key: str | None = None) -> str:
@@ -215,7 +229,7 @@ def check_one(tweet_id: str, timeout: int, retries: int) -> dict:
     return build_check_result(tweet_id, "error", 0, url, last_error.__class__.__name__)
 
 
-def run_check(config: CheckConfig, log=print) -> dict:
+def run_check(config: CheckConfig, log=print, progress=None, stop_event: threading.Event | None = None) -> dict:
     ids = read_ids(config.input_path, config.top_n)
     if not ids:
         raise ValueError(f"No tweet IDs found in: {config.input_path}")
@@ -223,14 +237,20 @@ def run_check(config: CheckConfig, log=print) -> dict:
     out_dir = check_output_dir(config.output_root, config.input_path)
     stem = normalize_job_name(config.input_path)
     results: list[dict] = []
+    emit_progress(progress, "check", 0, len(ids))
 
     log(f"[Stage 1] Checking {len(ids)} tweet IDs with {config.workers} workers...")
     with ThreadPoolExecutor(max_workers=config.workers) as executor:
         futures = {executor.submit(check_one, tweet_id, config.timeout, config.retries): tweet_id for tweet_id in ids}
         for index, future in enumerate(as_completed(futures), start=1):
+            ensure_not_cancelled(stop_event)
             results.append(future.result())
+            emit_progress(progress, "check", index, len(ids))
             if index % 50 == 0 or index == len(ids):
                 log(f"[Stage 1] Completed {index}/{len(ids)}")
+        if stop_event is not None and stop_event.is_set():
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise UserCancelledError("Operation cancelled by user.")
 
     order_map = {tweet_id: idx for idx, tweet_id in enumerate(ids)}
     results.sort(key=lambda item: order_map.get(item["id"], 10**12))
@@ -326,7 +346,7 @@ def fetch_batch(session: requests.Session, tweet_ids: list[str], timeout: int, r
     raise RuntimeError("Unexpected fetch retry fallthrough.")
 
 
-def run_fetch(config: FetchConfig, log=print) -> dict:
+def run_fetch(config: FetchConfig, log=print, progress=None, stop_event: threading.Event | None = None) -> dict:
     ids = read_ids(config.input_path, config.top_n)
     if not ids:
         raise ValueError(f"No tweet IDs found in: {config.input_path}")
@@ -339,9 +359,12 @@ def run_fetch(config: FetchConfig, log=print) -> dict:
     batches = chunk_ids(ids, config.batch_size)
     all_tweets: list[dict] = []
     returned_ids: set[str] = set()
+    processed_count = 0
+    emit_progress(progress, "fetch", 0, len(ids))
 
     log(f"[Stage 2] Fetching {len(ids)} IDs in {len(batches)} batch(es)...")
     for index, batch_ids in enumerate(batches, start=1):
+        ensure_not_cancelled(stop_event)
         data = fetch_batch(session, batch_ids, config.timeout, config.retries)
         tweets = data.get("tweets") or []
         all_tweets.extend(tweets)
@@ -349,9 +372,12 @@ def run_fetch(config: FetchConfig, log=print) -> dict:
             tweet_id = str(tweet.get("id", "")).strip()
             if tweet_id:
                 returned_ids.add(tweet_id)
+        processed_count += len(batch_ids)
+        emit_progress(progress, "fetch", processed_count, len(ids))
         log(f"[Stage 2] Batch {index}/{len(batches)}: requested={len(batch_ids)} returned={len(tweets)}")
         if index < len(batches) and config.sleep_sec > 0:
-            time.sleep(config.sleep_sec)
+            if stop_event is not None and stop_event.wait(config.sleep_sec):
+                raise UserCancelledError("Operation cancelled by user.")
 
     missing_ids = [tweet_id for tweet_id in ids if tweet_id not in returned_ids]
     output_json = out_dir / f"{stem}.json"
@@ -401,6 +427,8 @@ def run_pipeline(
     fetch_timeout: int = DEFAULT_FETCH_TIMEOUT,
     fetch_retries: int = 3,
     log=print,
+    progress=None,
+    stop_event: threading.Event | None = None,
 ) -> dict:
     check_summary = run_check(
         CheckConfig(
@@ -412,9 +440,12 @@ def run_pipeline(
             retries=check_retries,
         ),
         log=log,
+        progress=progress,
+        stop_event=stop_event,
     )
     fetch_summary = None
     if check_summary["available_count"] > 0:
+        ensure_not_cancelled(stop_event)
         fetch_summary = run_fetch(
             FetchConfig(
                 input_path=Path(check_summary["available_csv"]),
@@ -426,6 +457,8 @@ def run_pipeline(
                 retries=fetch_retries,
             ),
             log=log,
+            progress=progress,
+            stop_event=stop_event,
         )
     summary = {
         "stage": "pipeline",
@@ -469,6 +502,8 @@ def run_test(
     fetch_timeout: int = DEFAULT_FETCH_TIMEOUT,
     fetch_retries: int = 3,
     log=print,
+    progress=None,
+    stop_event: threading.Event | None = None,
 ) -> dict:
     if mode not in {"check", "pipeline"}:
         raise ValueError("Test mode must be 'check' or 'pipeline'.")
@@ -485,6 +520,8 @@ def run_test(
                 retries=check_retries,
             ),
             log=log,
+            progress=progress,
+            stop_event=stop_event,
         )
     else:
         run_result = run_pipeline(
@@ -499,6 +536,8 @@ def run_test(
             fetch_timeout=fetch_timeout,
             fetch_retries=fetch_retries,
             log=log,
+            progress=progress,
+            stop_event=stop_event,
         )
 
     summary = {

@@ -123,7 +123,10 @@ UI 支持：
 7. 保存和加载 UI 配置。
 8. 直接打开最新输出目录。
 9. 在运行后直接打开最新报告。
-10. 使用更大的默认窗口，并支持 Windows 高 DPI 缩放。
+10. 显示动态可视化进度条。
+11. 显示已处理数 / 总数。
+12. 提供“停止运行”按钮中断当前任务。
+13. 使用更大的默认窗口，并支持 Windows 高 DPI 缩放。
 
 保存的 UI 配置会写入项目根目录下的 `ui_settings.json`。如果你把 API Key 一起保存进去，这个文件里会包含敏感信息，因此不要提交它。
 
@@ -303,7 +306,10 @@ The UI lets you:
 7. Save and load UI configuration.
 8. Open the latest output directory directly.
 9. Open the latest generated report directly after a run.
-10. Use a larger default window with Windows high-DPI scaling.
+10. Show a live visual progress bar.
+11. Show processed count / total count.
+12. Provide a Stop button to cancel the current task.
+13. Use a larger default window with Windows high-DPI scaling.
 
 Saved UI configuration is written to `ui_settings.json` in the project root. It may include your API key if you save it in the form, so do not commit that file.
 
