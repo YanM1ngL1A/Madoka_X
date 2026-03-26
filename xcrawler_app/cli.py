@@ -42,6 +42,7 @@ def add_fetch_only_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--sleep-sec", type=float, default=DEFAULT_SLEEP_SEC, help="Sleep between API batches.")
     parser.add_argument("--timeout", type=int, default=DEFAULT_FETCH_TIMEOUT, help="HTTP timeout in seconds for stage 2.")
     parser.add_argument("--retries", type=int, default=3, help="Retry count for stage 2.")
+    parser.add_argument("--no-resume", action="store_true", help="Disable automatic checkpoint resume for stage 2.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--sleep-sec", type=float, default=DEFAULT_SLEEP_SEC, help="Sleep between API batches.")
     pipeline_parser.add_argument("--fetch-timeout", type=int, default=DEFAULT_FETCH_TIMEOUT, help="HTTP timeout in seconds for stage 2.")
     pipeline_parser.add_argument("--fetch-retries", type=int, default=3, help="Retry count for stage 2.")
+    pipeline_parser.add_argument("--no-resume", action="store_true", help="Disable automatic checkpoint resume for stage 2.")
 
     test_parser = subparsers.add_parser("test", help="Randomly sample IDs and test the flow.")
     add_shared_args(test_parser)
@@ -76,6 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     test_parser.add_argument("--sleep-sec", type=float, default=DEFAULT_SLEEP_SEC, help="Sleep between API batches.")
     test_parser.add_argument("--fetch-timeout", type=int, default=DEFAULT_FETCH_TIMEOUT, help="HTTP timeout in seconds for stage 2.")
     test_parser.add_argument("--fetch-retries", type=int, default=3, help="Retry count for stage 2.")
+    test_parser.add_argument("--no-resume", action="store_true", help="Disable automatic checkpoint resume for stage 2.")
 
     return parser
 
@@ -105,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
                     sleep_sec=args.sleep_sec,
                     timeout=args.timeout,
                     retries=args.retries,
+                    resume=not args.no_resume,
                 )
             )
         elif args.command == "pipeline":
@@ -120,6 +124,7 @@ def main(argv: list[str] | None = None) -> int:
                 sleep_sec=args.sleep_sec,
                 fetch_timeout=args.fetch_timeout,
                 fetch_retries=args.fetch_retries,
+                fetch_resume=not args.no_resume,
             )
         elif args.command == "test":
             run_test(
@@ -137,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
                 sleep_sec=args.sleep_sec,
                 fetch_timeout=args.fetch_timeout,
                 fetch_retries=args.fetch_retries,
+                fetch_resume=not args.no_resume,
             )
         else:
             raise RuntimeError(f"Unsupported command: {args.command}")

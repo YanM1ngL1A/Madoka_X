@@ -80,6 +80,12 @@ python run_cli.py check --input "D:\你的路径\tweet_ids.csv" --output-root ".
 python run_cli.py fetch --input "D:\你的路径\available_ids.csv" --output-root ".\outputs" --api-key "你的真实 API Key"
 ```
 
+默认自动断点续爬；如果你要强制从头开始，可加：
+
+```powershell
+python run_cli.py fetch --input "D:\你的路径\available_ids.csv" --output-root ".\outputs" --api-key "你的真实 API Key" --no-resume
+```
+
 执行完整流程：
 
 ```powershell
@@ -156,6 +162,13 @@ UI 支持：
 2. `.\outputs\roe_tweet_id\stage2_fetch\`
 3. `.\outputs\roe_tweet_id\tests\`
 4. `.\outputs\roe_tweet_id\runs\`
+
+其中阶段二目录会包含可续爬文件：
+
+1. `roe_tweet_id.jsonl`（流式抓取结果）
+2. `roe_tweet_id_missing_ids.txt`（每批缺失 ID）
+3. `roe_tweet_id_fetch_state.json`（自动断点续爬状态）
+4. `roe_tweet_id_summary.json`（阶段二汇总）
 
 #### 6. GitHub 提交说明
 
@@ -263,6 +276,12 @@ Stage 2 only:
 python run_cli.py fetch --input "D:\path\to\available_ids.csv" --output-root ".\outputs" --api-key "YOUR_REAL_KEY"
 ```
 
+Checkpoint resume is enabled by default. To force a clean restart:
+
+```powershell
+python run_cli.py fetch --input "D:\path\to\available_ids.csv" --output-root ".\outputs" --api-key "YOUR_REAL_KEY" --no-resume
+```
+
 Full pipeline:
 
 ```powershell
@@ -339,6 +358,13 @@ Given an output root like `.\outputs` and an input file named `roe_tweet_id.csv`
 2. `.\outputs\roe_tweet_id\stage2_fetch\`
 3. `.\outputs\roe_tweet_id\tests\`
 4. `.\outputs\roe_tweet_id\runs\`
+
+The stage2 directory includes resume artifacts:
+
+1. `roe_tweet_id.jsonl` (streamed tweet output)
+2. `roe_tweet_id_missing_ids.txt` (missing IDs by batch)
+3. `roe_tweet_id_fetch_state.json` (automatic checkpoint state)
+4. `roe_tweet_id_summary.json` (stage2 summary)
 
 #### 6. GitHub Notes
 
